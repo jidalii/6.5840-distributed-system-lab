@@ -26,8 +26,6 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-// var ACK int8 = 1
-// var NACK int8 = 0
 
 // Enum of task types
 type TaskType int8
@@ -54,46 +52,43 @@ type TaskStatus int8
 
 const (
 	Unassigned TaskStatus = iota
-	InProgress
 	Timeout
-	Nack
+	Assigned
 	Ack
 )
 
 // Struct of task assigned by coordinator to workers
 type Task struct {
-	id         int        // id number of the task
-	taskType   TaskType   // operation request
-	fileName   string     // filename of file to be processed by this task
-	taskStatus TaskStatus // status of the task
-	startTime  time.Time  // start time of the task
-	nReduce    int        // number of reduce tasks
+	Id         int        // id number of the task
+	TaskType   TaskType   // operation request
+	FileName   string     // filename of file to be processed by this task (map phrase only)
+	FileNames  []string   // filenames of files to be processed by this task (reduce phrase only)
+	TaskStatus TaskStatus // status of the task
+	StartTime  time.Time  // start time of the task
+	NReduce    int        // number of reduce tasks
 }
 
 type TaskMsg struct {
-	task *Task
-	ok   chan struct{}
+	Task *Task
+	Ok   chan struct{}
 }
 
 // Struct of worker request
-// type TaskRequestReq struct {
-// }
+type TaskRequestReq struct {
+}
 
-// Struct of worker request
-type TaskRequestResp struct {
-	task *Task
-	ok   chan struct{}
+type TaskReportResp struct {
 }
 
 // Struct of worker response
 type Report struct {
-	task           *Task
-	interFilenames []string
+	Task           *Task
+	InterFilenames []string
 }
 
 type ReportMsg struct {
-	report *Report
-	ok     chan struct{}
+	Report *Report
+	Ok     chan struct{}
 }
 
 // Struct of coordinator response to workers
