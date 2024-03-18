@@ -59,13 +59,7 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 func processMap(task *Task, mapf func(string, string) []KeyValue) {
-	timeoutCh := make(chan struct{})
-	done := make(chan struct{})
-
-	go checkTimeout(timeoutCh, done)
-
 	// open the file in the assigned task
-	// log.Println(task)
 	filename := task.FileName
 	file, err := os.Open(filename)
 	if err != nil {
@@ -102,37 +96,19 @@ func processMap(task *Task, mapf func(string, string) []KeyValue) {
 		os.Rename(ofile.Name(), oname)
 		filenames = append(filenames, oname)
 	}
-	// log.Println("inter file generated from map:", filenames)
-	// close(done)
 
-	select {
-	case <-timeoutCh:
-		// Handle timeout, such as aborting the operation, logging an error, etc.
-		task.TaskStatus = Timeout
-	default:
-		// No timeout occurred, continue as normal
-		task.TaskStatus = Ack
-	}
-	// log.Printf("Map task status: %v\n", task.TaskStatus)
-	// task.TaskStatus = Ack
+	task.TaskStatus = Ack
 	reportTask(task, filenames)
 }
 
 func processReduce(task *Task, reducef func(string, []string) string) {
-	timeoutCh := make(chan struct{})
-	done := make(chan struct{})
-	// intermediate := []KeyValue{}
-	go checkTimeout(timeoutCh, done)
-
 	// open the intermediate file in the assigned task
 	intermediate := []KeyValue{}
-	// log.Println("reduce task file", task.FileNames)
 	for _, filename := range task.FileNames {
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
 		}
-
 		// decode the intermediate file
 		dec := json.NewDecoder(file)
 		for {
@@ -145,10 +121,7 @@ func processReduce(task *Task, reducef func(string, []string) string) {
 		file.Close()
 	}
 
-	// sort.Sort(ByKey(intermediate))
-	sort.Slice(intermediate, func(i, j int) bool {
-		return intermediate[i].Key < intermediate[j].Key
-	})
+	sort.Sort(ByKey(intermediate))
 
 	// create output file
 	oname := fmt.Sprintf("mr-out-%d", task.Id)
@@ -172,15 +145,7 @@ func processReduce(task *Task, reducef func(string, []string) string) {
 	// close(done)
 	os.Rename(ofile.Name(), oname)
 
-	select {
-	case <-timeoutCh:
-		// Handle timeout, such as aborting the operation, logging an error, etc.
-		task.TaskStatus = Timeout
-	default:
-		// No timeout occurred, continue as normal
-		task.TaskStatus = Ack
-	}
-	// task.TaskStatus = Ack
+	task.TaskStatus = Ack
 
 	reportTask(task, make([]string, 0))
 }
@@ -195,7 +160,6 @@ func requestTask() *Task {
 	if !ok {
 		log.Fatal("cannot call Coordinator.RequestHandler")
 	}
-	// log.Println("task received:", reply)
 	return reply
 }
 
@@ -208,16 +172,6 @@ func reportTask(task *Task, filenames []string) {
 	reply := &Report{}
 
 	call("Coordinator.ReportHandler", args, reply)
-}
-
-func checkTimeout(timeoutCh chan struct{}, done chan struct{}) {
-	select {
-	case <-time.After(time.Second * 10):
-		timeoutCh <- struct{}{}
-	case <-done:
-		return
-	}
-
 }
 
 // example function to show how to make an RPC call to the coordinator.

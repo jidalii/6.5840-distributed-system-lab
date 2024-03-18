@@ -18,7 +18,6 @@ type Coordinator struct {
 	nMap    int      // number of map tasks
 	nReduce int      // number of reduce tasks
 	tasks   []Task   // tasks for monitoring
-	// intermediateFiles []string       // a slice of names of intermediate files
 	phrase    OpPhrase       // current stage of the MapReduce task
 	requestCh chan TaskMsg   // channel of task requests from workers
 	reportCh  chan ReportMsg // channel of reports about task from workers
@@ -27,12 +26,18 @@ type Coordinator struct {
 
 type ICoordinator interface {
 	schedule()
+	RequestHandler(req *interface{}, resp *Task) error
+	ReportHandler(req *Report, resp *interface{}) error
 	assignTask(task *Task)
 	processReport(report *Report)
-	requestHandler(req *interface{}, resp *Task) error
-	reportHandler(req *Report, resp *interface{}) error
+	updateCurrentPhrase(allTaskDone bool)
+	selectCurrentTaskType() TaskType
 	setupWorkerRequest(task *Task)
 	initMapPhrase()
+	setupMapTasks()
+	setupReduceTasks()
+	organizeInterFiles()
+	initMapTask(i int, file string) Task
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -40,7 +45,6 @@ type ICoordinator interface {
 // process and schedule request and report messages from `requestCh` and `reportCh`
 func (c *Coordinator) schedule() {
 	c.initMapPhrase()
-	// log.Print("after initMapPhrase\n")
 	for {
 		select {
 		case msg := <-c.requestCh:
@@ -56,7 +60,6 @@ func (c *Coordinator) schedule() {
 
 // handle request PRC call from workers
 func (c *Coordinator) RequestHandler(req *Task, resp *Task) error {
-	// log.Print("received request\n")
 	msg := TaskMsg{
 		Task: resp,
 		Ok:   make(chan struct{}),
@@ -68,9 +71,6 @@ func (c *Coordinator) RequestHandler(req *Task, resp *Task) error {
 
 // handle report PRC call from workers
 func (c *Coordinator) ReportHandler(req *Report, resp *Report) error {
-	// c.processReport(req)
-	// log.Println("received report:", req)
-
 	msg := ReportMsg{
 		Report: req,
 		Ok:     make(chan struct{}),
@@ -101,7 +101,7 @@ func (c *Coordinator) assignTask(task *Task) {
 	allTaskDone := true
 
 	for i := range c.tasks {
-		if (c.tasks[i].TaskStatus == TaskStatus(Assigned) || c.tasks[i].TaskStatus == TaskStatus(Timeout)) && time.Since(c.tasks[i].StartTime) > time.Second*10 {
+		if c.tasks[i].TaskStatus == TaskStatus(Assigned) && time.Since(c.tasks[i].StartTime) > time.Second*10 {
 			c.tasks[i].TaskStatus = TaskStatus(Unassigned)
 		}
 
@@ -119,10 +119,29 @@ func (c *Coordinator) assignTask(task *Task) {
 	}
 
 	c.updateCurrentPhrase(allTaskDone)
-	// log.Println(allTaskDone, c.phrase)
 
 	// if all the current tasks are done or in progress
 	*task = Task{TaskType: WaitTask}
+}
+
+// process worker's report:
+//
+// - if report is `Ack`, mark the task as `Ack`
+//
+// - otherwise, mark the task as `Unassigned`
+func (c *Coordinator) processReport(report *Report) {
+	if report.Task.TaskStatus == Ack {
+		for i, taskItem := range c.tasks {
+			if taskItem.Id == report.Task.Id {
+				c.tasks[i].TaskStatus = Ack
+			}
+		}
+
+		// update files of Coordinator
+		c.files = append(c.files, report.InterFilenames...)
+	} else {
+		report.Task.TaskStatus = Unassigned
+	}
 }
 
 // update phrase to:
@@ -168,26 +187,6 @@ func (c *Coordinator) selectCurrentTaskType() TaskType {
 	return currentTaskType
 }
 
-// process worker's report:
-//
-// - if report is `Ack`, mark the task as `Ack`
-//
-// - otherwise, mark the task as `Unassigned`
-func (c *Coordinator) processReport(report *Report) {
-	if report.Task.TaskStatus == Ack {
-		for i, taskItem := range c.tasks {
-			if taskItem.Id == report.Task.Id {
-				c.tasks[i].TaskStatus = Ack
-			}
-		}
-
-		// update files of Coordinator
-		c.files = append(c.files, report.InterFilenames...)
-	} else {
-		report.Task.TaskStatus = Unassigned
-	}
-}
-
 func (c *Coordinator) initMapPhrase() {
 	c.phrase = MapPhrase
 	c.setupMapTasks()
@@ -198,13 +197,11 @@ func (c *Coordinator) setupMapTasks() {
 		task := c.initMapTask(i, file)
 		c.tasks = append(c.tasks, task)
 	}
-	// log.Println(c.tasks)
 	c.files = nil //  clear c.files
 }
 
 func (c *Coordinator) setupReduceTasks() {
 	reduceTaskFiles := c.organizeInterFiles()
-	// log.Println(reduceTaskFiles)
 
 	for reduceTaskNum, files := range reduceTaskFiles {
 		task := initReduceTask(reduceTaskNum, files)
@@ -220,7 +217,6 @@ func (c *Coordinator) organizeInterFiles() map[int][]string {
 	for _, filename := range c.files {
 		// Extract X and Y from filename (e.g., "mr-1-2")
 		parts := strings.Split(filename, "-")
-		// mapTaskNum, _ := strconv.Atoi(parts[1])
 		reduceTaskNum, _ := strconv.Atoi(parts[2])
 
 		// Assign filename to the correct reduce task list
